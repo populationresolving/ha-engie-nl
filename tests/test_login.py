@@ -53,6 +53,7 @@ class FakeEngie:
         self.password_ok = False
         self.app = web.Application()
         r = self.app.router
+        r.add_get("/authenticatie/inloggen", self.login_page)
         r.add_post("/identity/externallogin", self.externallogin)
         r.add_get("/oauth2/default/v1/authorize", self.authorize)
         r.add_post("/idp/idx/introspect", self.introspect)
@@ -71,8 +72,16 @@ class FakeEngie:
         r.add_get("/api/payments-info", self.guard(lambda q: {"current_debt_amount": 0}))
 
     # --- Sitecore + Okta
+    async def login_page(self, request):
+        resp = web.Response(content_type="text/html", text="<html><title>Inloggen</title></html>")
+        resp.set_cookie("ASP.NET_SessionId", "aspnet-1")
+        return resp
+
     async def externallogin(self, request):
-        raise web.HTTPFound("/oauth2/default/v1/authorize?client_id=c&response_mode=form_post&state=s1")
+        resp = web.HTTPFound("/oauth2/default/v1/authorize?client_id=c&response_mode=form_post&state=s1")
+        if request.cookies.get("ASP.NET_SessionId"):  # the OWIN quirk: no session, no nonce cookie
+            resp.set_cookie("OpenIdConnect.nonce.x", "n1")
+        raise resp
 
     def form_post(self):
         return web.Response(content_type="text/html", text=(
@@ -138,6 +147,8 @@ class FakeEngie:
         form = await request.post()
         if form.get("code") != "code-1" or form.get("state") != "s1":
             raise web.HTTPBadRequest()
+        if request.cookies.get("OpenIdConnect.nonce.x") != "n1":
+            raise web.HTTPFound("/authenticatie/mislukt")
         sid = f"site{len(self.site_sessions) + 1}"
         if self.handover_works:
             self.site_sessions.add(sid)
@@ -172,13 +183,15 @@ class LoginTests(unittest.IsolatedAsyncioTestCase):
         await site.start()
         port = site._server.sockets[0].getsockname()[1]
         base = f"http://localhost:{port}"
-        self._saved = (api.EXTERNAL_LOGIN_URL, api.MIJN_BASE)
+        self._saved = (api.EXTERNAL_LOGIN_URL, api.MIJN_BASE, api.LOGIN_PAGE_URL, api.WWW_BASE)
         api.EXTERNAL_LOGIN_URL = f"{base}/identity/externallogin?authenticationType=OktaB2C"
         api.MIJN_BASE = base
+        api.LOGIN_PAGE_URL = f"{base}/authenticatie/inloggen"
+        api.WWW_BASE = base
         self.sessions = []
 
     async def asyncTearDown(self):
-        api.EXTERNAL_LOGIN_URL, api.MIJN_BASE = self._saved
+        api.EXTERNAL_LOGIN_URL, api.MIJN_BASE, api.LOGIN_PAGE_URL, api.WWW_BASE = self._saved
         for s in self.sessions:
             await s.close()
         await self.runner.cleanup()
@@ -250,6 +263,17 @@ class LoginTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("bad", str(ctx.exception).replace("incorrect", ""))
         self.assertEqual(self.fake.codes_sent, 0)
 
+
+    async def test_no_aspnet_session_means_no_nonce_means_mislukt(self):
+        """Regression: posting the challenge without loading the login page first fails like ENGIE does."""
+        saved = api.LOGIN_PAGE_URL
+        api.LOGIN_PAGE_URL = api.MIJN_BASE + "/api/app-user"  # a page that starts no ASP.NET session
+        try:
+            self.fake.require_email = False
+            with self.assertRaises(api.EngieSessionError):
+                await self.client().async_login()
+        finally:
+            api.LOGIN_PAGE_URL = saved
 
     async def test_handover_failure_is_not_blamed_on_the_code(self):
         self.fake.handover_works = False

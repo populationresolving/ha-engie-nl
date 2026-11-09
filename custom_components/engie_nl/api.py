@@ -3,8 +3,9 @@
 ENGIE NL has no public API. This client signs in the way the website does and
 then calls the JSON endpoints the Mijn ENGIE web app itself uses:
 
-1. The Sitecore site (``www.engie.nl/identity/externallogin``) answers with the
-   Okta authorize URL.
+1. The Sitecore site: load ``/authenticatie/inloggen`` (starts the ASP.NET session, without
+   which no OpenIdConnect nonce cookie is set), then ``POST /identity/externallogin``
+   answers with the Okta authorize URL.
 2. If Okta still knows this client (session cookies), it answers with the
    auto-submit ``form_post`` right away. Otherwise its hosted sign-in page holds a
    ``stateToken`` for the Okta Identity Engine (IDX) API: identify → password →
@@ -49,6 +50,7 @@ _LOGGER = logging.getLogger(__name__)
 
 WWW_BASE = "https://www.engie.nl"
 MIJN_BASE = "https://mijn.engie.nl"
+LOGIN_PAGE_URL = f"{WWW_BASE}/authenticatie/inloggen"
 EXTERNAL_LOGIN_URL = (
     f"{WWW_BASE}/identity/externallogin?authenticationType=OktaB2C"
     "&ReturnUrl=%2fidentity%2fexternallogincallback%3fReturnUrl%3d%252fauth%252fexternallysignedin"
@@ -184,9 +186,17 @@ class EngieClient:
         async with self._lock:
             self._logged_in = False
             self._pending = None
+            # Load the login page first, as a browser does: it starts the ASP.NET session, and
+            # only with that session does the site set its OpenIdConnect.nonce cookie on the
+            # challenge below (OWIN/System.Web cookie quirk). Without the nonce cookie the
+            # Okta callback ends at /authenticatie/mislukt ("Inloggen mislukt").
+            await self._get_html(LOGIN_PAGE_URL)
             try:
                 async with self._session.post(
-                    EXTERNAL_LOGIN_URL, allow_redirects=False, headers=self._headers(), timeout=TIMEOUT
+                    EXTERNAL_LOGIN_URL,
+                    allow_redirects=False,
+                    headers={**self._headers(), "Origin": WWW_BASE, "Referer": LOGIN_PAGE_URL},
+                    timeout=TIMEOUT,
                 ) as resp:
                     authorize = resp.headers.get("Location")
                     status = resp.status
