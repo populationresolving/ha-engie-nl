@@ -1,0 +1,31 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Sign in to Mijn ENGIE",
+        "description": "Unofficial: uses the same sign-in and data as the Mijn ENGIE website. The password is stored encrypted.",
+        "data": {
+          "username": "Username (e-mail)",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in to Mijn ENGIE again",
+        "description": "The Mijn ENGIE session for {username} could not be renewed. Enter the password again.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "ENGIE refused the username or password.",
+      "mfa_required": "This account asks for a second sign-in step, which the integration doesn't support.",
+      "cannot_connect": "Could not reach Mijn ENGIE or it answered unexpectedly. See the log.",
+      "unknown": "Unexpected error. See the log."
+    },
+    "abort": {
+      "already_configured": "This ENGIE account is already set up.",
+      "reauth_successful": "Signed in again."
+    }
+  }
+}
