@@ -86,5 +86,30 @@ class ParseTests(unittest.TestCase):
         self.assertIsNone(parse.auto_submit_form('<form method="post"><input name="username"></form>'))
 
 
+    def test_state_token_unescaped(self):
+        html = '<script>var x={"stateToken":"02.id.ab\\x2Dcd"};</script>'
+        self.assertEqual(parse.extract_state_token(html), "02.id.ab-cd")
+        self.assertIsNone(parse.extract_state_token("<html></html>"))
+
+    def test_idx_prefers_password_then_email(self):
+        sel = {"name": "select-authenticator-authenticate", "href": "/c", "value": [{"name": "authenticator", "options": [
+            {"value": {"form": {"value": [{"name": "id", "value": "e1"}, {"name": "methodType", "value": "email"}]}}},
+            {"value": {"form": {"value": [{"name": "id", "value": "p1"}, {"name": "methodType", "value": "password"}]}}}]}]}
+        avd = {"name": "authenticator-verification-data", "href": "/c", "value": [
+            {"name": "authenticator", "form": {"value": [{"name": "id", "value": "e1"}, {"name": "methodType"}]}}]}
+        resp = {"remediation": {"value": [avd, sel]}}
+        first = parse.idx_next(resp, password_used=False)
+        self.assertEqual((first.kind, first.authenticator_id, first.method), ("select", "p1", "password"))
+        then = parse.idx_next(resp, password_used=True)
+        self.assertEqual((then.kind, then.authenticator_id), ("send_email", "e1"))
+        err = parse.idx_next({"messages": {"value": [{"class": "ERROR", "message": "Nope"}]}}, False)
+        self.assertEqual((err.kind, err.message), ("error", "Nope"))
+        ok = parse.idx_next({"success": {"href": "/login/token/redirect?x"}}, True)
+        self.assertEqual(ok.kind, "success")
+        code = parse.idx_next({"currentAuthenticatorEnrollment": {"value": {"type": "email"}},
+                               "remediation": {"value": [{"name": "challenge-authenticator", "href": "/a"}]}}, True)
+        self.assertEqual(code.kind, "code")
+
+
 if __name__ == "__main__":
     unittest.main()

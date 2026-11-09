@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Sign in to Mijn ENGIE",
-        "description": "Unofficial: uses the same sign-in and data as the Mijn ENGIE website. The password is stored encrypted.",
+        "description": "Unofficial: uses the same sign-in and data as the Mijn ENGIE website. The password is stored encrypted. If ENGIE emails you a code, you'll enter it in the next step.",
         "data": {
           "username": "Username (as on Mijn ENGIE)",
           "password": "Password"
@@ -11,9 +11,16 @@
       },
       "reauth_confirm": {
         "title": "Sign in to Mijn ENGIE again",
-        "description": "The Mijn ENGIE session for {username} could not be renewed. Enter the password again.",
+        "description": "The Mijn ENGIE session for {username} has ended. Submit to sign in again (ENGIE may email you a new code). Leave the password empty to use the stored one.",
         "data": {
-          "password": "Password"
+          "password": "Password (optional)"
+        }
+      },
+      "code": {
+        "title": "Code from ENGIE",
+        "description": "ENGIE has emailed you a sign-in code. Enter it here.",
+        "data": {
+          "code": "Code"
         }
       }
     },
@@ -21,7 +28,8 @@
       "invalid_auth": "ENGIE refused the username or password.",
       "mfa_required": "This account asks for a second sign-in step, which the integration doesn't support.",
       "cannot_connect": "Could not reach Mijn ENGIE or it answered unexpectedly. See the log.",
-      "unknown": "Unexpected error. See the log."
+      "unknown": "Unexpected error. See the log.",
+      "invalid_code": "ENGIE didn't accept the code. Check it (or wait for the newest email) and try again."
     },
     "abort": {
       "already_configured": "This ENGIE account is already set up.",

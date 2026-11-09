@@ -12,4 +12,6 @@ STORAGE_VERSION = 1
 STORAGE_KEY_SECRET = f"{DOMAIN}_key"
 STORAGE_KEY_READINGS = f"{DOMAIN}_readings"  # + f".{entry_id}"
 
+CONF_COOKIES = "cookies"  # Fernet-encrypted JSON list of cookies (Okta session/device)
+
 ATTRIBUTION = "Data from Mijn ENGIE (unofficial)"

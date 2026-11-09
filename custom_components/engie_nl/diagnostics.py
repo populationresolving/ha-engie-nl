@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant
 
 from .coordinator import EngieConfigEntry
 
-TO_REDACT = {CONF_USERNAME, CONF_PASSWORD, "ean", "id", "reference", "attachment", "description"}
+TO_REDACT = {CONF_USERNAME, CONF_PASSWORD, "cookies", "ean", "id", "reference", "attachment", "description"}
 
 
 async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: EngieConfigEntry) -> dict[str, Any]:

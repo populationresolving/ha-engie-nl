@@ -24,12 +24,17 @@ For live usage, use a P1 meter reader (e.g. HomeWizard P1, DSMR) instead.
 ## Install
 Add this repository to the Home Assistant Marketplace (or HACS) as a custom repository (type: integration),
 install **ENGIE Nederland (unofficial)**, restart, then *Settings → Devices & services → Add integration →
-ENGIE Nederland*. Sign in with your Mijn ENGIE username and password. Accounts with a second sign-in step (MFA)
-are not supported.
+ENGIE Nederland*. Sign in with your Mijn ENGIE username and password. ENGIE's sign-in (Okta) usually emails a
+code as a second step: the integration then asks for it.
+
+### The email code
+The integration answers Okta's password step itself and keeps Okta's session and device cookies (encrypted), so a
+later sign-in can often skip the code. Background refreshes **never** make ENGIE send a code: when Okta wants a new
+one, Home Assistant shows a *re-authenticate* notification; submit it and enter the code from the new email.
 
 ## Privacy and security
 - The password is stored encrypted (Fernet); the key lives in a separate `.storage/engie_nl_key` file.
-- Credentials, tokens and cookies are never logged. Diagnostics redact username, EANs and invoice references.
+- Credentials, codes, tokens and cookies are never logged; the cookies are stored Fernet-encrypted too. Diagnostics redact username, EANs and invoice references.
 - Refreshes every 6 hours (15 minutes after a failure).
 
 ## Development

@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Inloggen bij Mijn ENGIE",
-        "description": "Onofficieel: gebruikt dezelfde inlog en gegevens als de Mijn ENGIE-website. Het wachtwoord wordt versleuteld opgeslagen.",
+        "description": "Onofficieel: gebruikt dezelfde inlog en gegevens als de Mijn ENGIE-website. Het wachtwoord wordt versleuteld opgeslagen. Mailt ENGIE je een code, dan vul je die in de volgende stap in.",
         "data": {
           "username": "Gebruikersnaam (zoals bij Mijn ENGIE)",
           "password": "Wachtwoord"
@@ -11,9 +11,16 @@
       },
       "reauth_confirm": {
         "title": "Opnieuw inloggen bij Mijn ENGIE",
-        "description": "De Mijn ENGIE-sessie voor {username} kon niet worden vernieuwd. Vul het wachtwoord opnieuw in.",
+        "description": "De Mijn ENGIE-sessie voor {username} is verlopen. Verzend om opnieuw in te loggen (ENGIE mailt mogelijk een nieuwe code). Laat het wachtwoord leeg om het opgeslagen wachtwoord te gebruiken.",
         "data": {
-          "password": "Wachtwoord"
+          "password": "Wachtwoord (optioneel)"
+        }
+      },
+      "code": {
+        "title": "Code van ENGIE",
+        "description": "ENGIE heeft je een inlogcode gemaild. Vul die hier in.",
+        "data": {
+          "code": "Code"
         }
       }
     },
@@ -21,7 +28,8 @@
       "invalid_auth": "ENGIE weigert de gebruikersnaam of het wachtwoord.",
       "mfa_required": "Dit account vraagt om een tweede inlogstap; dat ondersteunt de integratie niet.",
       "cannot_connect": "Mijn ENGIE is niet bereikbaar of gaf een onverwacht antwoord. Zie het logboek.",
-      "unknown": "Onverwachte fout. Zie het logboek."
+      "unknown": "Onverwachte fout. Zie het logboek.",
+      "invalid_code": "ENGIE accepteert de code niet. Controleer hem (of wacht op de nieuwste mail) en probeer het opnieuw."
     },
     "abort": {
       "already_configured": "Dit ENGIE-account is al ingesteld.",

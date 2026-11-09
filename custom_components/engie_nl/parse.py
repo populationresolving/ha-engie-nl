@@ -236,3 +236,108 @@ def cumulative_points(
         previous = value
         points.append((date.fromisoformat(day_iso), value, total, cost))
     return points
+
+
+# ------------------------------------------------------------------ Okta IDX
+
+_STATE_TOKEN_RE = re.compile(r'stateToken["\']?\s*[:=]\s*["\']([^"\']+)["\']')
+
+
+def extract_state_token(html: str) -> Optional[str]:
+    """The Okta stateToken embedded in the hosted sign-in page (JS-escaped as \\xNN)."""
+    match = _STATE_TOKEN_RE.search(html or "")
+    if not match:
+        return None
+    return re.sub(r"\\x([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)), match.group(1))
+
+
+@dataclass
+class IdxAction:
+    """What to do next in an Okta Identity Engine (IDX) sign-in."""
+
+    kind: str  # success | identify | password | code | select | send_email | error | unsupported
+    href: Optional[str] = None
+    authenticator_id: Optional[str] = None
+    method: Optional[str] = None
+    with_password: bool = False
+    message: Optional[str] = None
+
+
+def _remediations(response: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    items = ((response or {}).get("remediation") or {}).get("value") or []
+    return {r.get("name"): r for r in items if isinstance(r, dict)}
+
+
+def _field(remediation: Dict[str, Any], name: str) -> Optional[Dict[str, Any]]:
+    return next((f for f in remediation.get("value") or [] if f.get("name") == name), None)
+
+
+def _form_values(node: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    form = ((node or {}).get("form") or {}).get("value") or []
+    return {f.get("name"): f.get("value") for f in form if isinstance(f, dict)}
+
+
+def _select_options(remediation: Dict[str, Any]) -> Dict[str, str]:
+    """{methodType: authenticator id} from a select-authenticator remediation."""
+    field = _field(remediation, "authenticator") or {}
+    options: Dict[str, str] = {}
+    for option in field.get("options") or []:
+        values = _form_values(option.get("value"))
+        if values.get("methodType") and values.get("id"):
+            options[str(values["methodType"])] = str(values["id"])
+    return options
+
+
+def _current_authenticator(response: Dict[str, Any]) -> Optional[str]:
+    for key in ("currentAuthenticatorEnrollment", "currentAuthenticator"):
+        value = ((response or {}).get(key) or {}).get("value") or {}
+        if value.get("type"):
+            return str(value["type"])
+    return None
+
+
+def idx_error(response: Dict[str, Any]) -> Optional[str]:
+    """Okta's error message(s) in an IDX response, if any."""
+    messages = ((response or {}).get("messages") or {}).get("value") or []
+    errors = [str(m.get("message")) for m in messages if isinstance(m, dict) and m.get("class") == "ERROR"]
+    return "; ".join(errors) or None
+
+
+def idx_next(response: Dict[str, Any], password_used: bool) -> IdxAction:
+    """Pick the next IDX step: prefer the password, use email only when Okta insists."""
+    error = idx_error(response)
+    if error:
+        return IdxAction("error", message=error)
+    success = (response or {}).get("success") or {}
+    if success.get("href"):
+        return IdxAction("success", href=success["href"])
+    rem = _remediations(response)
+    if "identify" in rem:
+        fields = {f.get("name") for f in rem["identify"].get("value") or []}
+        return IdxAction("identify", href=rem["identify"].get("href"), with_password="credentials" in fields)
+    if "challenge-authenticator" in rem:
+        kind = _current_authenticator(response)
+        href = rem["challenge-authenticator"].get("href")
+        if kind == "password":
+            return IdxAction("password", href=href)
+        if kind == "email":
+            return IdxAction("code", href=href, method="email")
+        return IdxAction("unsupported", message=f"authenticator {kind}")
+    select = rem.get("select-authenticator-authenticate")
+    if select:
+        options = _select_options(select)
+        if "password" in options and not password_used:
+            return IdxAction("select", href=select.get("href"), authenticator_id=options["password"], method="password")
+        if "email" in options:
+            if "authenticator-verification-data" in rem:
+                data = rem["authenticator-verification-data"]
+                values = _form_values(_field(data, "authenticator"))
+                if values.get("id") == options["email"]:
+                    return IdxAction("send_email", href=data.get("href"), authenticator_id=options["email"], method="email")
+            return IdxAction("select", href=select.get("href"), authenticator_id=options["email"], method="email")
+        return IdxAction("unsupported", message=f"authenticators {sorted(options)}")
+    if "authenticator-verification-data" in rem:
+        data = rem["authenticator-verification-data"]
+        values = _form_values(_field(data, "authenticator"))
+        return IdxAction("send_email", href=data.get("href"), authenticator_id=values.get("id"), method="email")
+    return IdxAction("unsupported", message=f"steps {sorted(n for n in rem if n)}")
