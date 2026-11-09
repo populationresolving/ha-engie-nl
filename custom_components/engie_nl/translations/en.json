@@ -5,7 +5,7 @@
         "title": "Sign in to Mijn ENGIE",
         "description": "Unofficial: uses the same sign-in and data as the Mijn ENGIE website. The password is stored encrypted.",
         "data": {
-          "username": "Username (e-mail)",
+          "username": "Username (as on Mijn ENGIE)",
           "password": "Password"
         }
       },

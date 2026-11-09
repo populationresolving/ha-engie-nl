@@ -82,6 +82,19 @@ class EngieData:
         return next((p for p in self.metering_points if p.kind == kind), None)
 
 
+def _okta_error(data: Any) -> str:
+    """Okta's error code/summary/causes (never contains the credentials)."""
+    if not isinstance(data, dict):
+        return "no JSON body"
+    causes = "; ".join(
+        str(c.get("errorSummary")) for c in data.get("errorCauses") or [] if isinstance(c, dict)
+    )
+    parts = [str(data.get("errorCode") or data.get("status") or "?"), str(data.get("errorSummary") or "")]
+    if causes:
+        parts.append(causes)
+    return ": ".join(p for p in parts if p)
+
+
 def _where(url: Any) -> str:
     """Host + path of a URL, without the query (which can carry tokens)."""
     parts = urlsplit(str(url))
@@ -152,11 +165,11 @@ class EngieClient:
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
             raise EngieConnectionError(f"login.engie.nl not reachable: {err}") from err
         if status == 401 or (isinstance(data, dict) and data.get("errorCode") == "E0000004"):
-            raise EngieAuthError("ENGIE refused the username or password")
+            raise EngieAuthError(f"ENGIE refused the sign-in (HTTP {status}, {_okta_error(data)})")
         if status == 429:
             raise EngieConnectionError("Too many sign-in attempts; ENGIE asks to wait")
         if status != 200 or not isinstance(data, dict):
-            raise EngieConnectionError(f"Unexpected answer from the ENGIE sign-in ({status})")
+            raise EngieConnectionError(f"Unexpected answer from the ENGIE sign-in (HTTP {status}, {_okta_error(data)})")
         state = data.get("status")
         if state == "SUCCESS" and data.get("sessionToken"):
             return str(data["sessionToken"])

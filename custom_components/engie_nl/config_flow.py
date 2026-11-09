@@ -41,7 +41,7 @@ class EngieNLConfigFlow(ConfigFlow, domain=DOMAIN):
         except EngieMfaRequired:
             return {"base": "mfa_required"}
         except EngieAuthError as err:
-            _LOGGER.info("ENGIE sign-in refused: %s", err)
+            _LOGGER.warning("ENGIE sign-in refused: %s", err)
             return {"base": "invalid_auth"}
         except EngieError as err:
             _LOGGER.warning("ENGIE sign-in failed: %s", err)

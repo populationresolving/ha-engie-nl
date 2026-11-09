@@ -5,7 +5,7 @@
         "title": "Inloggen bij Mijn ENGIE",
         "description": "Onofficieel: gebruikt dezelfde inlog en gegevens als de Mijn ENGIE-website. Het wachtwoord wordt versleuteld opgeslagen.",
         "data": {
-          "username": "Gebruikersnaam (e-mail)",
+          "username": "Gebruikersnaam (zoals bij Mijn ENGIE)",
           "password": "Wachtwoord"
         }
       },
