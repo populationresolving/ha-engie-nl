@@ -34,6 +34,7 @@ from yarl import URL
 
 from .parse import (
     IdxAction,
+    page_hints,
     MeteringPoint,
     Reading,
     auto_submit_form,
@@ -71,6 +72,10 @@ class EngieConnectionError(EngieError):
 
 class EngieAuthError(EngieError):
     """The credentials were refused or the session cannot be established."""
+
+
+class EngieSessionError(EngieError):
+    """Okta accepted the sign-in but no Mijn ENGIE session came out of it."""
 
 
 class EngieCodeRequired(EngieAuthError):
@@ -127,6 +132,7 @@ class EngieClient:
         self._build_id: Optional[str] = None
         self._logged_in = False
         self._pending: Optional[_IdxState] = None
+        self._trace: List[str] = []
         self._lock = asyncio.Lock()
 
     # -------------------------------------------------------------- cookies
@@ -285,17 +291,34 @@ class EngieClient:
 
     async def _finish(self, url: str, html: str) -> None:
         """From Okta's form_post to a working Mijn ENGIE session."""
+        self._trace = []
         url, html = await self._follow_forms(url, html)
+        handover = f"after Okta: {_where(url)} {page_hints(html)}"
         url, html = await self._get_html(f"{MIJN_BASE}/")
         url, html = await self._follow_forms(url, html)
-        if urlsplit(url).netloc != urlsplit(MIJN_BASE).netloc:
-            raise EngieAuthError(f"Sign-in did not reach Mijn ENGIE (ended at {_where(url)})")
+        if urlsplit(url).netloc != urlsplit(MIJN_BASE).netloc or not extract_build_id(html):
+            _LOGGER.warning(
+                "Mijn ENGIE handover failed. %s. Hops: %s. Cookie names now: %s",
+                handover,
+                " | ".join(self._trace),
+                sorted({f"{m.key}@{m['domain']}" for m in self._session.cookie_jar}),
+            )
+            raise EngieSessionError(f"Sign-in did not reach Mijn ENGIE (ended at {_where(url)})")
         self._build_id = extract_build_id(html)
         self._logged_in = True
+
+    def _record(self, method: str, resp: aiohttp.ClientResponse) -> None:
+        """Hosts, paths, statuses and cookie names of each hop (never values or queries)."""
+        for hop in [*resp.history, resp]:
+            names = [f"{k}@{m['domain'] or hop.url.host}" for k, m in hop.cookies.items()]
+            self._trace.append(f"{method} {_where(hop.url)} {hop.status}" + (f" set {names}" if names else ""))
+            method = "GET"
+        del self._trace[:-40]
 
     async def _get_html(self, url: str) -> "tuple[str, str]":
         try:
             async with self._session.get(url, headers=self._headers(), timeout=TIMEOUT) as resp:
+                self._record("GET", resp)
                 return str(resp.url), await resp.text()
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             raise EngieConnectionError(f"{_where(url)} not reachable: {err}") from err
@@ -311,6 +334,7 @@ class EngieClient:
                 async with self._session.post(
                     target, data=form.inputs, headers=self._headers(), timeout=TIMEOUT
                 ) as resp:
+                    self._record("POST", resp)
                     url, html = str(resp.url), await resp.text()
             except (aiohttp.ClientError, asyncio.TimeoutError) as err:
                 raise EngieConnectionError(f"{_where(target)} not reachable: {err}") from err

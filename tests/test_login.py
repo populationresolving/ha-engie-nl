@@ -47,6 +47,7 @@ class FakeEngie:
         self.site_sessions = set()
         self.okta_sessions = set()
         self.require_email = True
+        self.handover_works = True
         self.codes_sent = 0
         self.current = None
         self.password_ok = False
@@ -138,7 +139,8 @@ class FakeEngie:
         if form.get("code") != "code-1" or form.get("state") != "s1":
             raise web.HTTPBadRequest()
         sid = f"site{len(self.site_sessions) + 1}"
-        self.site_sessions.add(sid)
+        if self.handover_works:
+            self.site_sessions.add(sid)
         resp = web.HTTPFound("/")
         resp.set_cookie("sess", sid)
         raise resp
@@ -247,6 +249,22 @@ class LoginTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Password is incorrect", str(ctx.exception))
         self.assertNotIn("bad", str(ctx.exception).replace("incorrect", ""))
         self.assertEqual(self.fake.codes_sent, 0)
+
+
+    async def test_handover_failure_is_not_blamed_on_the_code(self):
+        self.fake.handover_works = False
+        client = self.client()
+        with self.assertRaises(api.EngieCodeRequired):
+            await client.async_login(send_code=True)
+        with self.assertLogs("engie_nl.api", level="WARNING") as logs:
+            with self.assertRaises(api.EngieSessionError):
+                await client.async_submit_code(CODE)
+        text = "\n".join(logs.output)
+        self.assertIn("Hops:", text)
+        self.assertIn("authorization-code/okta/callback", text)
+        self.assertIn("sess@", text)  # cookie names, ...
+        self.assertNotIn("site1", text)  # ... never values
+        self.assertNotIn("code-1", text)
 
 
 if __name__ == "__main__":

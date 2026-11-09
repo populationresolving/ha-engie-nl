@@ -15,7 +15,7 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
 
-from .api import EngieAuthError, EngieClient, EngieCodeRequired, EngieError
+from .api import EngieAuthError, EngieClient, EngieCodeRequired, EngieError, EngieSessionError
 from .const import CONF_COOKIES, DOMAIN, NAME
 from .crypto import EngieCipher
 
@@ -73,6 +73,9 @@ class EngieNLConfigFlow(ConfigFlow, domain=DOMAIN):
             await self._client.async_get_data()
         except EngieCodeRequired:
             return None
+        except EngieSessionError as err:
+            _LOGGER.warning("ENGIE sign-in accepted, but Mijn ENGIE gave no session: %s", err)
+            return {"base": "no_session"}
         except EngieAuthError as err:
             _LOGGER.warning("ENGIE sign-in refused: %s", err)
             return {"base": "invalid_auth"}

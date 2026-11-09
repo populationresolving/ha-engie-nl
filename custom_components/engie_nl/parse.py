@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 # Register names as Mijn ENGIE reports them in /api/meterstands, mapped to stable keys.
 REGISTER_KEYS = {
@@ -341,3 +342,32 @@ def idx_next(response: Dict[str, Any], password_used: bool) -> IdxAction:
         values = _form_values(_field(data, "authenticator"))
         return IdxAction("send_email", href=data.get("href"), authenticator_id=values.get("id"), method="email")
     return IdxAction("unsupported", message=f"steps {sorted(n for n in rem if n)}")
+
+
+def page_hints(html: str) -> str:
+    """How a page might move on (for diagnostics): script/meta redirects, forms, mentions of mijn.engie.nl.
+
+    Only structure: no URLs with queries, no input values.
+    """
+    html = html or ""
+    lower = html.lower()
+    hints = [f"{len(html)} chars"]
+    for needle, label in (
+        ("mijn.engie.nl", "mentions mijn.engie.nl"),
+        ('http-equiv="refresh"', "meta refresh"),
+        ("location.href", "location.href"),
+        ("location.replace", "location.replace"),
+        ("window.location", "window.location"),
+        ("document.forms", "submits a form by script"),
+        ("__next_data__", "is a Mijn ENGIE page"),
+        ("statetoken", "is an Okta sign-in page"),
+    ):
+        if needle in lower:
+            hints.append(label)
+    for form in find_forms(html):
+        action = urlsplit(form.action)
+        hints.append(f"form {form.method} {action.netloc}{action.path} inputs {sorted(form.inputs)}")
+    title = re.search(r"<title[^>]*>(.*?)</title>", html, re.S | re.I)
+    if title:
+        hints.append(f"title {title.group(1).strip()[:60]!r}")
+    return "; ".join(hints)

@@ -29,7 +29,8 @@
       "mfa_required": "Dit account vraagt om een tweede inlogstap; dat ondersteunt de integratie niet.",
       "cannot_connect": "Mijn ENGIE is niet bereikbaar of gaf een onverwacht antwoord. Zie het logboek.",
       "unknown": "Onverwachte fout. Zie het logboek.",
-      "invalid_code": "ENGIE accepteert de code niet. Controleer hem (of wacht op de nieuwste mail) en probeer het opnieuw."
+      "invalid_code": "ENGIE accepteert de code niet. Controleer hem (of wacht op de nieuwste mail) en probeer het opnieuw.",
+      "no_session": "ENGIE accepteerde de inlog, maar Mijn ENGIE startte geen sessie. Details staan in het logboek."
     },
     "abort": {
       "already_configured": "Dit ENGIE-account is al ingesteld.",

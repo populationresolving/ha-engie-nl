@@ -29,7 +29,8 @@
       "mfa_required": "This account asks for a second sign-in step, which the integration doesn't support.",
       "cannot_connect": "Could not reach Mijn ENGIE or it answered unexpectedly. See the log.",
       "unknown": "Unexpected error. See the log.",
-      "invalid_code": "ENGIE didn't accept the code. Check it (or wait for the newest email) and try again."
+      "invalid_code": "ENGIE didn't accept the code. Check it (or wait for the newest email) and try again.",
+      "no_session": "ENGIE accepted the sign-in, but Mijn ENGIE didn't start a session. Details are in the log."
     },
     "abort": {
       "already_configured": "This ENGIE account is already set up.",
