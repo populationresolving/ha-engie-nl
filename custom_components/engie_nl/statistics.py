@@ -26,7 +26,17 @@ from homeassistant.util import dt as dt_util
 
 from .api import EngieData
 from .const import DOMAIN, STORAGE_KEY_READINGS, STORAGE_VERSION
-from .parse import REGISTER_TARIFF, cumulative_points, merge_readings
+from .parse import (
+    REGISTER_TARIFF,
+    covered_through,
+    cumulative_points,
+    daily_costs,
+    daily_prices,
+    daily_usage,
+    merge_month_totals,
+    merge_readings,
+    running_sum,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -74,15 +84,27 @@ class ReadingHistory:
             hass, STORAGE_VERSION, f"{STORAGE_KEY_READINGS}.{entry_id}"
         )
         self.history: dict[str, list[list[Any]]] = {}
+        # {electricity|return|gas: [[iso day covered, "YYYY-MM", month total], ...]}
+        self.month_totals: dict[str, list[list[Any]]] = {}
 
     async def async_load(self) -> None:
-        self.history = (await self._store.async_load() or {}).get("readings", {})
+        stored = await self._store.async_load() or {}
+        self.history = stored.get("readings", {})
+        self.month_totals = stored.get("month_totals", {})
 
     async def async_merge(self, data: EngieData) -> None:
         merged = merge_readings(self.history, data.readings)
-        if merged != self.history:
+        covered = covered_through(data.metering_points, dt_util.now().date())
+        totals = merge_month_totals(self.month_totals, data.consumption, covered)
+        if merged != self.history or totals != self.month_totals:
             self.history = merged
-            await self._store.async_save({"readings": merged})
+            self.month_totals = totals
+            await self._store.async_save({"readings": merged, "month_totals": totals})
+
+    def daily(self, data: EngieData) -> dict[str, Any]:
+        """Per-day usage derived from the month totals, plus the total cost per day."""
+        usage = {key: daily_usage(items) for key, items in self.month_totals.items()}
+        return {"usage": usage, "cost": daily_costs(usage, daily_prices(data.metering_points))}
 
     async def async_remove(self) -> None:
         await self._store.async_remove()
@@ -117,3 +139,43 @@ def async_update_statistics(hass: HomeAssistant, history: dict[str, list[list[An
                 )
         except Exception:  # noqa: BLE001 - recorder may be unavailable; try again next refresh
             _LOGGER.debug("Could not import ENGIE statistics for %s", key, exc_info=True)
+
+
+DAILY_LABELS = {"electricity": "electricity per day", "return": "electricity returned per day", "gas": "gas per day"}
+
+
+def async_update_daily_statistics(hass: HomeAssistant, daily: dict[str, Any]) -> None:
+    """Import per-day usage (and total cost) as statistics dated on the day itself.
+
+    A plain sensor would book yesterday's usage on today (when it is fetched);
+    external statistics put it at local midnight of the day it belongs to.
+    Ids: ``engie_nl:electricity_daily``, ``return_daily``, ``gas_daily``, ``cost_daily``.
+    """
+
+    def rows(days: list[tuple[Any, float]]) -> list[StatisticData]:
+        return [
+            StatisticData(start=dt_util.start_of_local_day(day), state=value, sum=total)
+            for day, value, total in running_sum(days)
+        ]
+
+    try:
+        for key, days in daily["usage"].items():
+            if not days:
+                continue
+            is_gas = key == "gas"
+            async_add_external_statistics(
+                hass,
+                _metadata(
+                    statistic_id(f"{key}_daily"),
+                    f"ENGIE {DAILY_LABELS.get(key, key)}",
+                    UnitOfVolume.CUBIC_METERS if is_gas else UnitOfEnergy.KILO_WATT_HOUR,
+                    "volume" if is_gas else "energy",
+                ),
+                rows([(day, value) for day, value, _ in days]),
+            )
+        if daily["cost"]:
+            async_add_external_statistics(
+                hass, _metadata(statistic_id("cost_daily"), "ENGIE cost per day", "EUR", None), rows(daily["cost"])
+            )
+    except Exception:  # noqa: BLE001 - recorder may be unavailable; try again next refresh
+        _LOGGER.debug("Could not import ENGIE daily statistics", exc_info=True)

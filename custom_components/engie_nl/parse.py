@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from html.parser import HTMLParser
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
@@ -136,6 +136,7 @@ class MeteringPoint:
     grid_operator: Optional[str]
     yearly_estimate: Dict[str, Optional[float]]
     tariffs: Dict[str, Optional[float]]
+    data_to: Optional[date] = None  # usage data is complete up to (not including) this day
 
 
 def parse_metering_points(user: Dict[str, Any]) -> List[MeteringPoint]:
@@ -163,6 +164,7 @@ def parse_metering_points(user: Dict[str, Any]) -> List[MeteringPoint]:
                     for k in ("normal", "low", "single", "return_normal", "return_low", "return_single")
                 },
                 tariffs={k: _num(v) for k, v in (mp.get("tariffs") or {}).items()},
+                data_to=_parse_date(mp.get("data_to")),
             )
         )
     return points
@@ -237,6 +239,149 @@ def cumulative_points(
         previous = value
         points.append((date.fromisoformat(day_iso), value, total, cost))
     return points
+
+
+# ------------------------------------------------------------------ daily usage
+#
+# Mijn ENGIE has no per-day endpoint. `/api/consumption` gives the running total of
+# the current month, and for a readable smart meter that total moves forward every
+# day (metering point `data_to` = the first day NOT yet included). So each refresh
+# stores a snapshot (last day covered, month, total); the increase between two
+# snapshots is the usage of the day(s) newly covered.
+
+DAILY_FIELDS = {
+    "electricity": "totalConsumptionPower",
+    "return": "totalRedeliveryPower",
+    "gas": "totalConsumptionGas",
+}
+
+
+def covered_through(points: List[MeteringPoint], today: date) -> date:
+    """Last day the month total includes (the day before the earliest `data_to`, else yesterday)."""
+    ends = [p.data_to for p in points if p.data_to]
+    return (min(ends) if ends else today) - timedelta(days=1)
+
+
+def merge_month_totals(
+    history: Dict[str, List[List[Any]]], consumption: Any, covered: date
+) -> Dict[str, List[List[Any]]]:
+    """Add this refresh's month totals to {key: [[iso day covered, "YYYY-MM", total], ...]}.
+
+    One snapshot per covered day and month (the latest refresh wins). Missing, negative or
+    malformed values are skipped, so a failed call never produces a fake drop.
+    """
+    merged = {key: [list(item) for item in items] for key, items in history.items()}
+    if not isinstance(consumption, dict):
+        return merged
+    year, month = consumption.get("year"), consumption.get("month")
+    if not isinstance(year, int) or not isinstance(month, int) or not 1 <= month <= 12:
+        return merged
+    label = f"{year:04d}-{month:02d}"
+    for key, source in DAILY_FIELDS.items():
+        total = _num(consumption.get(source))
+        if total is None or total < 0:
+            continue
+        # Keyed by (day, month): on the 1st the new month can report 0 for a day the
+        # old month already covered; that must not replace the old month's last total.
+        by_day = {(item[0], item[1]): item for item in merged.get(key, [])}
+        by_day[(covered.isoformat(), label)] = [covered.isoformat(), label, total]
+        merged[key] = [by_day[k] for k in sorted(by_day)]
+    return merged
+
+
+def daily_usage(snapshots: List[List[Any]]) -> List[Tuple[date, float, int]]:
+    """(day, usage, days the measurement spans) per day, oldest first.
+
+    * Same month: usage = increase of the total since the previous snapshot.
+    * New month: the total restarted, so it is the usage since the 1st. Days between
+      the previous snapshot and the 1st are unknown and get no value.
+    * A snapshot that skips days covers them together; the amount is divided evenly
+      and every such day reports the span (> 1) so it can be shown as an estimate.
+    * A lower total in the same month (correction) only sets a new baseline.
+    The first snapshot is a baseline too: it yields no usage.
+    """
+    result: Dict[date, Tuple[float, int]] = {}
+    previous: Optional[Tuple[date, str, float]] = None
+    for day_iso, label, total in snapshots:
+        day, total = date.fromisoformat(day_iso), float(total)
+        if previous is not None:
+            prev_day, prev_label, prev_total = previous
+            first = prev_day + timedelta(days=1)
+            if label == prev_label:
+                delta = total - prev_total
+            else:
+                delta = total
+                first = max(first, date(int(label[:4]), int(label[5:7]), 1))
+            span = (day - first).days + 1
+            if delta >= 0 and span >= 1:
+                share = round(delta / span, 3)
+                for offset in range(span):
+                    result[first + timedelta(days=offset)] = (share, span)
+        previous = (day, label, total)
+    return [(d, result[d][0], result[d][1]) for d in sorted(result)]
+
+
+def running_sum(days: List[Tuple[date, float]]) -> List[Tuple[date, float, float]]:
+    """(day, value, cumulative sum) for statistics."""
+    points, total = [], 0.0
+    for day, value in days:
+        total = round(total + value, 4)
+        points.append((day, value, total))
+    return points
+
+
+def _mean(values: List[Optional[float]]) -> Optional[float]:
+    known = [v for v in values if v is not None]
+    return sum(known) / len(known) if known else None
+
+
+def daily_prices(points: List[MeteringPoint]) -> Dict[str, Optional[float]]:
+    """Current all-in price per unit for the daily keys, and the fixed costs per day.
+
+    The site gives one electricity total per day (no normal/low split), so the
+    electricity price is the mean of the normal and low tariff (or the single tariff).
+    `fixed` = fixed charges + network costs + tax credit (negative) of all connections.
+    """
+    elk = next((p for p in points if p.kind == "ELK"), None)
+    gas = next((p for p in points if p.kind == "GAS"), None)
+
+    def price(point: Optional[MeteringPoint], prefix: str) -> Optional[float]:
+        if point is None:
+            return None
+        t = point.tariffs
+        if point.single_tariff and t.get(f"{prefix}single") is not None:
+            return t.get(f"{prefix}single")
+        return _mean([t.get(f"{prefix}normal"), t.get(f"{prefix}low")]) or t.get(f"{prefix}single")
+
+    fixed = [p.tariffs.get(k) for p in (elk, gas) if p for k in ("fixed_charge", "operator_fee", "tax_credit")]
+    return {
+        "electricity": price(elk, "tariff_"),
+        "return": price(elk, "return_tariff_"),
+        "gas": price(gas, "tariff_"),
+        "fixed": round(sum(v for v in fixed if v is not None), 6) if any(v is not None for v in fixed) else None,
+    }
+
+
+def daily_costs(
+    usage: Dict[str, List[Tuple[date, float, int]]], prices: Dict[str, Optional[float]]
+) -> List[Tuple[date, float]]:
+    """Total cost per day: electricity + gas − feed-in + fixed costs, at the current tariffs.
+
+    Only for days where every connection that has a price also has a value, so a
+    day never shows half a bill.
+    """
+    needed = [k for k in ("electricity", "gas") if prices.get(k) is not None]
+    if not needed:
+        return []
+    by_key = {k: {d: v for d, v, _ in usage.get(k, [])} for k in ("electricity", "return", "gas")}
+    days = set.intersection(*(set(by_key[k]) for k in needed))
+    result = []
+    for day in sorted(days):
+        cost = sum(by_key[k][day] * (prices[k] or 0) for k in needed)
+        if prices.get("return") is not None:
+            cost -= by_key["return"].get(day, 0.0) * (prices["return"] or 0)
+        result.append((day, round(cost + (prices.get("fixed") or 0), 4)))
+    return result
 
 
 # ------------------------------------------------------------------ Okta IDX

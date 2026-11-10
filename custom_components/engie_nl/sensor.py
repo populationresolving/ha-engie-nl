@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -18,6 +18,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .api import EngieData
 from .const import ATTRIBUTION, DOMAIN, NAME
@@ -70,6 +71,40 @@ def _yearly(kind: str, keys: tuple[str, ...]) -> Callable[[EngieData, EngieCoord
         return sum(v for v in values if v) if any(v is not None for v in values) else None
 
     return value
+
+
+def _last_day(coordinator: EngieCoordinator, key: str) -> tuple[Any, ...] | None:
+    """Latest completed day for a daily key ("cost" or a usage key), unless it is stale.
+
+    Normally that is yesterday. If ENGIE is a day behind it is the day before; older
+    than that the sensor shows unknown instead of an outdated number.
+    """
+    days = coordinator.daily["cost"] if key == "cost" else coordinator.daily["usage"].get(key) or []
+    if not days or days[-1][0] < dt_util.now().date() - timedelta(days=2):
+        return None
+    return days[-1]
+
+
+def _daily(key: str) -> Callable[[EngieData, EngieCoordinator], Any]:
+    def value(_: EngieData, coordinator: EngieCoordinator) -> Any:
+        last = _last_day(coordinator, key)
+        return last[1] if last else None
+
+    return value
+
+
+def _daily_attrs(key: str) -> Callable[[EngieData, EngieCoordinator], dict[str, Any]]:
+    def attrs(_: EngieData, coordinator: EngieCoordinator) -> dict[str, Any]:
+        last = _last_day(coordinator, key)
+        if not last:
+            return {}
+        result: dict[str, Any] = {"date": last[0].isoformat()}
+        if len(last) > 2:
+            # > 1 means ENGIE skipped days and the amount was divided evenly over them
+            result["days_averaged"] = last[2]
+        return result
+
+    return attrs
 
 
 def _contract_end(data: EngieData, _: EngieCoordinator) -> date | None:
@@ -196,6 +231,14 @@ SENSORS: tuple[EngieSensorDescription, ...] = (
     EngieSensorDescription(key="consumption_gas_month", name="Gas used this month", needs="GAS",
         value_fn=_dict("consumption", "totalConsumptionGas"), device_class=SensorDeviceClass.GAS,
         native_unit_of_measurement=UnitOfVolume.CUBIC_METERS, suggested_display_precision=0),
+    # Last completed day (derived from the daily growth of the month total)
+    EngieSensorDescription(key="consumption_power_yesterday", name="Electricity used yesterday", needs="ELK",
+        value_fn=_daily("electricity"), attrs_fn=_daily_attrs("electricity"), device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, suggested_display_precision=1, icon="mdi:flash"),
+    EngieSensorDescription(key="consumption_gas_yesterday", name="Gas used yesterday", needs="GAS",
+        value_fn=_daily("gas"), attrs_fn=_daily_attrs("gas"), device_class=SensorDeviceClass.GAS,
+        native_unit_of_measurement=UnitOfVolume.CUBIC_METERS, suggested_display_precision=1, icon="mdi:fire"),
+    _money("cost_yesterday", "Energy cost yesterday", _daily("cost"), attrs_fn=_daily_attrs("cost"), icon="mdi:cash-clock"),
     # Annual statement forecast and bills
     _money("expected_annual_statement", "Expected annual statement", _dict("estimations", "total_estimated_nota_amount"), icon="mdi:file-chart"),
     _money("expected_settlement", "Expected settlement", _dict("estimations", "to_pay_balance_amount"), icon="mdi:scale-balance"),

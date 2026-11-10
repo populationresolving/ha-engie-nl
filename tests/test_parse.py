@@ -73,6 +73,58 @@ class ParseTests(unittest.TestCase):
         self.assertAlmostEqual(pts[-1][3], 39.0)
         self.assertIsNone(parse.cumulative_points([["2026-10-01", 1]])[0][3])
 
+    def test_daily_usage_from_month_totals(self):
+        user = {"selectedAddress": {"metering_points": [
+            dict(USER["selectedAddress"]["metering_points"][0], data_to="2026-11-10T00:00:00+01:00"),
+            dict(USER["selectedAddress"]["metering_points"][1], data_to="2026-11-10T00:00:00+01:00")]}}
+        points = parse.parse_metering_points(user)
+        self.assertEqual(parse.covered_through(points, date(2026, 11, 10)), date(2026, 11, 9))
+        self.assertEqual(parse.covered_through(parse.parse_metering_points(USER), date(2026, 11, 10)), date(2026, 11, 9))
+
+        def snap(history, day, month, power, gas, back=0.0):
+            payload = {"year": 2026, "month": month, "totalConsumptionPower": power,
+                       "totalRedeliveryPower": back, "totalConsumptionGas": gas}
+            return parse.merge_month_totals(history, payload, day)
+
+        h = snap({}, date(2026, 11, 9), 11, 42.5, 11)
+        self.assertEqual(parse.daily_usage(h["electricity"]), [])  # first snapshot = baseline only
+        h = snap(h, date(2026, 11, 9), 11, 42.6, 11)               # same day again: latest wins
+        self.assertEqual(len(h["electricity"]), 1)
+        h = snap(h, date(2026, 11, 10), 11, 50.6, 14)
+        h = snap(h, date(2026, 11, 13), 11, 59.6, 20)              # two days skipped → averaged over 3
+        h = snap(h, date(2026, 11, 14), 11, 58.0, 20)              # correction downwards: no negative day
+        h = parse.merge_month_totals(h, None, date(2026, 11, 15))  # failed call: nothing stored
+        h = parse.merge_month_totals(h, {"year": 2026, "month": 11, "totalConsumptionPower": -1}, date(2026, 11, 15))
+        h = snap(h, date(2026, 11, 30), 11, 90.0, 40)
+        h = snap(h, date(2026, 11, 30), 12, 0.0, 0)                # 1 Dec: new month, nothing covered yet
+        h = snap(h, date(2026, 12, 1), 12, 7.5, 3)
+        self.assertEqual(h["electricity"][-2], ["2026-11-30", "2026-12", 0.0])
+        days = {d.isoformat(): (v, n) for d, v, n in parse.daily_usage(h["electricity"])}
+        self.assertEqual(days["2026-11-10"], (8.0, 1))
+        self.assertEqual([days[f"2026-11-{d}"] for d in (11, 12, 13)], [(3.0, 3)] * 3)
+        self.assertNotIn("2026-11-14", days)
+        self.assertEqual(days["2026-11-30"], (2.0, 16))            # 32 kWh over 15..30 Nov
+        self.assertEqual(days["2026-12-01"], (7.5, 1))
+        self.assertEqual({d.isoformat(): v for d, v, _ in parse.daily_usage(h["gas"])}["2026-11-10"], 3.0)
+
+    def test_daily_usage_month_rollover_with_gap(self):
+        h = [["2026-11-28", "2026-11", 80.0], ["2026-12-02", "2026-12", 9.0]]
+        days = {d.isoformat(): (v, n) for d, v, n in parse.daily_usage(h)}
+        self.assertEqual(days, {"2026-12-01": (4.5, 2), "2026-12-02": (4.5, 2)})  # 29–30 Nov unknown, not invented
+
+    def test_daily_costs(self):
+        points = parse.parse_metering_points(USER)
+        prices = parse.daily_prices(points)
+        self.assertAlmostEqual(prices["electricity"], 0.29)
+        self.assertAlmostEqual(prices["gas"], 1.40)
+        self.assertAlmostEqual(prices["fixed"], 0.2 - 1.7 + 0.2)
+        usage = {"electricity": [(date(2026, 11, 10), 10.0, 1), (date(2026, 11, 11), 5.0, 1)],
+                 "gas": [(date(2026, 11, 10), 2.0, 1)]}
+        costs = parse.daily_costs(usage, prices)
+        self.assertEqual([d for d, _ in costs], [date(2026, 11, 10)])  # 11 Nov has no gas value → no half bill
+        self.assertAlmostEqual(costs[0][1], 10 * 0.29 + 2 * 1.40 - 1.3)
+        self.assertEqual(parse.running_sum([(date(2026, 11, 10), 1.5), (date(2026, 11, 11), 2.0)])[-1][2], 3.5)
+
     def test_build_id_and_forms(self):
         html = '<html><script id="__NEXT_DATA__" type="application/json">{"buildId":"abc-123","page":"/"}</script></html>'
         self.assertEqual(parse.extract_build_id(html), "abc-123")

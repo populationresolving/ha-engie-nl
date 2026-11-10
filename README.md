@@ -21,6 +21,17 @@ the expected annual statement, advance payment and invoices.
 
 For live usage, use a P1 meter reader (e.g. HomeWizard P1, DSMR) instead.
 
+### Usage per day (from v0.3.0)
+Mijn ENGIE has no per-day figures, but with a readable smart meter the month total moves forward every day.
+The integration stores that total at each refresh and takes the difference:
+
+- Sensors **Electricity used yesterday**, **Gas used yesterday** and **Energy cost yesterday** (attribute `date`;
+  `days_averaged` > 1 means ENGIE skipped days and the amount was divided evenly over them).
+- Statistics `engie_nl:electricity_daily`, `engie_nl:return_daily`, `engie_nl:gas_daily` and `engie_nl:cost_daily`,
+  dated on the day itself, for statistic and statistics-graph cards.
+- Starts on the day you install it (no history), one electricity figure per day (no normal/low split), gas in the
+  resolution ENGIE gives. Cost = usage × current tariff + fixed and network charges − tax credit.
+
 ## Install
 Add this repository to the Home Assistant Marketplace (or HACS) as a custom repository (type: integration),
 install **ENGIE Nederland (unofficial)**, restart, then *Settings → Devices & services → Add integration →

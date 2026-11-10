@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
@@ -15,7 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .api import EngieAuthError, EngieClient, EngieCodeRequired, EngieData, EngieError
 from .const import CONF_COOKIES, DOMAIN, RETRY_INTERVAL, UPDATE_INTERVAL
 from .crypto import EngieCipher
-from .statistics import ReadingHistory, async_update_statistics
+from .statistics import ReadingHistory, async_update_daily_statistics, async_update_statistics
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class EngieCoordinator(DataUpdateCoordinator[EngieData]):
         # Own session (and cookie jar) per account; closed on unload.
         self.session = async_create_clientsession(hass, auto_cleanup=False)
         self.history = ReadingHistory(hass, entry.entry_id)
+        self.daily: dict[str, Any] = {"usage": {}, "cost": []}
         self._client: EngieClient | None = None
         self._saved_cookies: str | None = None
 
@@ -69,6 +71,8 @@ class EngieCoordinator(DataUpdateCoordinator[EngieData]):
         self.update_interval = UPDATE_INTERVAL
         await self.history.async_merge(data)
         async_update_statistics(self.hass, self.history.history, data)
+        self.daily = self.history.daily(data)
+        async_update_daily_statistics(self.hass, self.daily)
         return data
 
     def _async_save_cookies(self) -> None:
